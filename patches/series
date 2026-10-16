@@ -17,3 +17,8 @@
 #   CUSTOM_TEMPLATES_FOLDER (500) and render_template_view() includes custom files
 #   outside the controller scope, so $this (used by InvoicePlane_Web) is undefined.
 #   Not fixed in develop (2026-10-16).
+0003-email-template-preview.patch  upstream:https://github.com/InvoicePlane/InvoicePlane/commit/f20b9c9e
+# ^ email template preview showed the HTML source as plain text (1.7.2 renders it
+#   via textContent; InvoicePlane#1432). Backport of the prep/v180 fix: srcdoc in a
+#   sandbox="" iframe. Also tightens the two mailer views from allow-same-origin to
+#   sandbox="" (upstream only did the template form). Drop when on >= 1.8.
