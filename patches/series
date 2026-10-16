@@ -1,0 +1,12 @@
+# Gabbaya patch series — applied in order on top of the InvoicePlane release
+# named in UPSTREAM_VERSION (with `patch -p1` from the application root).
+#
+# One patch per line:  <file>  <status>
+#   status = upstream:<PR-url>        submitted upstream; drop once released
+#          | downstream-only:<reason> intentionally kept in Gabbaya only
+#
+# Every patch MUST have a status. When an upstream release contains the
+# change, the patch fails to apply and the build breaks — that is the signal
+# to remove it here.
+#
+# (no patches yet)

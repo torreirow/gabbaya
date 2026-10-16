@@ -1,0 +1,75 @@
+name: Check upstream release
+
+# Weekly: if InvoicePlane has a newer stable release than UPSTREAM_VERSION,
+# open a PR that bumps the pin (version + sha256) and build it right away.
+# PRs opened with GITHUB_TOKEN do not trigger other workflows, hence the
+# explicit build dispatch.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare with latest stable release
+        id: cmp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < UPSTREAM_VERSION)
+          latest=$(gh release list -R InvoicePlane/InvoicePlane --exclude-pre-releases --exclude-drafts \
+                     --limit 1 --json tagName --jq '.[0].tagName' | sed 's/^v//')
+          echo "current=$current latest=$latest"
+          newest=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ "$newest" = "$current" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=true" >> "$GITHUB_OUTPUT"
+            echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open bump PR
+        if: steps.cmp.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.cmp.outputs.latest }}
+        run: |
+          set -euo pipefail
+          branch="upstream/v${LATEST}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Branch $branch already exists, nothing to do"; exit 0
+          fi
+
+          curl -sfL -o ip.zip "https://github.com/InvoicePlane/InvoicePlane/releases/download/v${LATEST}/v${LATEST}.zip"
+          echo "$LATEST" > UPSTREAM_VERSION
+          sha256sum ip.zip | cut -d' ' -f1 > UPSTREAM_SHA256
+          rm ip.zip
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add UPSTREAM_VERSION UPSTREAM_SHA256
+          git commit -m "upstream: InvoicePlane v${LATEST}"
+          git push origin "$branch"
+
+          gh pr create --base main --head "$branch" \
+            --title "upstream: InvoicePlane v${LATEST}" \
+            --body "New InvoicePlane release: https://github.com/InvoicePlane/InvoicePlane/releases/tag/v${LATEST}
+
+          Checklist:
+          - [ ] Build is green (patches still apply)
+          - [ ] Release notes read; drop patches that upstream now contains
+          - [ ] Custom templates / DB migration notes checked"
+
+          gh workflow run build.yml --ref "$branch"

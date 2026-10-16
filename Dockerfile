@@ -1,14 +1,19 @@
 FROM php:8.1-apache-bookworm
 
-LABEL maintainer="Funktionslust GmbH - Wolfgang Stark <info@funktionslust.digital>" \
-      org.opencontainers.image.title="InvoicePlane" \
-      org.opencontainers.image.description="Self-hosted open source invoicing application" \
-      org.opencontainers.image.url="https://invoiceplane.com" \
-      org.opencontainers.image.source="https://github.com/funktionslust/invoiceplane-docker" \
-      org.opencontainers.image.vendor="Funktionslust"
+# Gabbaya: patched Docker distribution of InvoicePlane.
+# Based on funktionslust/invoiceplane-docker (MIT), see LICENSE.
+LABEL org.opencontainers.image.title="Gabbaya" \
+      org.opencontainers.image.description="Patched Docker distribution of InvoicePlane, the self-hosted open source invoicing application" \
+      org.opencontainers.image.url="https://github.com/torreirow/gabbaya" \
+      org.opencontainers.image.source="https://github.com/torreirow/gabbaya" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="torreirow"
 
 # Build arguments
+# Upstream release to build on. CI passes the values from UPSTREAM_VERSION and
+# UPSTREAM_SHA256; the checksum is verified when given.
 ARG INVOICEPLANE_VERSION=""
+ARG INVOICEPLANE_SHA256=""
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Environment variables
@@ -21,7 +26,8 @@ ENV TZ=UTC \
     APACHE_RUN_GROUP=www-data \
     APACHE_LOG_DIR=/var/log/apache2 \
     APACHE_DOCUMENT_ROOT=/var/www/html \
-    PROXY_NETWORKS="172.16.0.0/12 10.0.0.0/8"
+    PROXY_NETWORKS="172.16.0.0/12 10.0.0.0/8" \
+    GABBAYA_CONFIG_DIR=/config
 
 # Install system dependencies and PHP extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -40,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev \
     libxslt1-dev \
     mariadb-client \
+    patch \
     tzdata \
     supervisor \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
@@ -135,6 +142,9 @@ RUN set -e; \
         wget -q https://github.com/InvoicePlane/InvoicePlane/archive/refs/heads/development.zip -O invoiceplane.zip; \
     else \
         wget -q "https://github.com/InvoicePlane/InvoicePlane/releases/download/v${VERSION}/v${VERSION}.zip" -O invoiceplane.zip; \
+        if [ -n "${INVOICEPLANE_SHA256}" ]; then \
+            echo "${INVOICEPLANE_SHA256}  invoiceplane.zip" | sha256sum -c -; \
+        fi; \
     fi \
     && unzip -q invoiceplane.zip -d /tmp/invoiceplane \
     && rm invoiceplane.zip \
@@ -142,12 +152,19 @@ RUN set -e; \
     && rm -rf /tmp/invoiceplane \
     && echo "$VERSION" > /var/www/html/.invoiceplane-version
 
+# Apply the Gabbaya patch series (see patches/series)
+COPY patches/ /usr/src/gabbaya/patches/
+COPY scripts/apply-patches.sh /usr/local/bin/gabbaya-apply-patches
+RUN chmod +x /usr/local/bin/gabbaya-apply-patches \
+    && gabbaya-apply-patches /usr/src/gabbaya/patches /var/www/html
+
 # Create necessary directories and set permissions
 RUN mkdir -p /var/www/html/uploads/archive \
     /var/www/html/uploads/customer_files \
     /var/www/html/uploads/temp \
     /var/www/html/application/logs \
-    && chown -R www-data:www-data /var/www/html \
+    /config \
+    && chown -R www-data:www-data /var/www/html /config \
     && find /var/www/html -type d -exec chmod 755 {} \; \
     && find /var/www/html -type f -exec chmod 644 {} \;
 
@@ -158,7 +175,9 @@ COPY scripts/view-logs.sh /usr/local/bin/logs
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/download-einvoice-templates.sh /usr/local/bin/logs
 
 # Create volumes for persistent data
-VOLUME ["/var/www/html/uploads", "/var/www/html/application/logs"]
+# /config holds ipconfig.php (encryption key, setup state) so it survives
+# container re-creation, e.g. on an image upgrade.
+VOLUME ["/var/www/html/uploads", "/var/www/html/application/logs", "/config"]
 
 WORKDIR /var/www/html
 

@@ -46,6 +46,21 @@ setup_config() {
     local ip_config="/var/www/html/ipconfig.php"
     local config_config="/var/www/html/application/config/config.php"
 
+    # Gabbaya: keep ipconfig.php in a persistent directory and link it into the
+    # web root. All edits below go to the real file: `sed -i` on the symlink
+    # would replace the link with a plain (non-persistent) file. PHP (setup
+    # wizard) writes through the link, so the target must be www-data owned.
+    if [ -n "${GABBAYA_CONFIG_DIR}" ]; then
+        local persistent="${GABBAYA_CONFIG_DIR}/ipconfig.php"
+        mkdir -p "${GABBAYA_CONFIG_DIR}"
+        if [ ! -f "${persistent}" ] && [ -f "${ip_config}" ] && [ ! -L "${ip_config}" ]; then
+            log "Moving existing ipconfig.php to ${GABBAYA_CONFIG_DIR}"
+            cp -p "${ip_config}" "${persistent}"
+        fi
+        ln -sfn "${persistent}" "${ip_config}"
+        ip_config="${persistent}"
+    fi
+
     # Create ipconfig.php if it doesn't exist
     if [ ! -f "${ip_config}" ]; then
         log "Creating ipconfig.php..."
@@ -270,6 +285,10 @@ set_permissions() {
     chown -R www-data:www-data /var/www/html/uploads \
                                 /var/www/html/application/logs \
                                 /var/www/html/application/config 2>/dev/null || true
+    if [ -n "${GABBAYA_CONFIG_DIR}" ]; then
+        chown -R www-data:www-data "${GABBAYA_CONFIG_DIR}" 2>/dev/null || true
+        chmod 640 "${GABBAYA_CONFIG_DIR}/ipconfig.php" 2>/dev/null || true
+    fi
 
     # Set permissions
     find /var/www/html/uploads -type d -exec chmod 755 {} \; 2>/dev/null || true
