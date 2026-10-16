@@ -9,4 +9,11 @@
 # change, the patch fails to apply and the build breaks — that is the signal
 # to remove it here.
 #
-# (no patches yet)
+0001-session-empty-save-path.patch  upstream:https://github.com/InvoicePlane/InvoicePlane/pull/1699
+# ^ fixes InvoicePlane#1690 (setup/login stuck: empty SESS_SAVE_PATH from
+#   ipconfig.php.example breaks sessions). Merged for 1.8; drop when on >= 1.8.
+0002-custom-public-templates.patch  upstream:pending
+# ^ custom public templates unusable: get_validated_template_path() ignores
+#   CUSTOM_TEMPLATES_FOLDER (500) and render_template_view() includes custom files
+#   outside the controller scope, so $this (used by InvoicePlane_Web) is undefined.
+#   Not fixed in develop (2026-10-16).
