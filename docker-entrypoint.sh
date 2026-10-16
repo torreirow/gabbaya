@@ -419,6 +419,23 @@ install_einvoice_templates() {
     fi
 }
 
+# Gabbaya: InvoicePlane ships its rewrite rules as `htaccess` (no dot). With
+# REMOVE_INDEXPHP=true every route except / then returns 404 until it is
+# renamed, so install it when index.php-less URLs are requested. The value can
+# come from the environment (env-file) or from ipconfig.php.
+setup_htaccess() {
+    local root="/var/www/html"
+    local remove="${REMOVE_INDEXPHP:-}"
+    if [ -z "${remove}" ] && [ -f "${root}/ipconfig.php" ]; then
+        remove=$(grep "^REMOVE_INDEXPHP=" "${root}/ipconfig.php" | cut -d'=' -f2 | tr -d "\"' ")
+    fi
+
+    if [ "${remove}" = "true" ] && [ -f "${root}/htaccess" ] && [ ! -f "${root}/.htaccess" ]; then
+        cp -p "${root}/htaccess" "${root}/.htaccess"
+        log "Installed .htaccess (REMOVE_INDEXPHP=true)"
+    fi
+}
+
 # Main execution
 main() {
     log "Starting InvoicePlane container initialization..."
@@ -439,6 +456,9 @@ main() {
 
     # Setup configuration
     setup_config
+
+    # Rewrite rules for index.php-less URLs
+    setup_htaccess
 
     # Set permissions
     set_permissions
