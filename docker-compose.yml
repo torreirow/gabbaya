@@ -1,8 +1,11 @@
 services:
-  invoiceplane:
-    build: .
-    image: funktionslust/invoiceplane:latest
-    container_name: invoiceplane
+  gabbaya:
+    build:
+      context: .
+      args:
+        INVOICEPLANE_VERSION: "1.7.2"
+    image: ghcr.io/torreirow/gabbaya:latest
+    container_name: gabbaya
     restart: unless-stopped
     ports:
       - "8080:80"
@@ -17,6 +20,7 @@ services:
     volumes:
       - invoiceplane_uploads:/var/www/html/uploads
       - invoiceplane_logs:/var/www/html/application/logs
+      - invoiceplane_config:/config
     depends_on:
       mariadb:
         condition: service_healthy
@@ -41,4 +45,5 @@ services:
 volumes:
   invoiceplane_uploads:
   invoiceplane_logs:
+  invoiceplane_config:
   mariadb_data:

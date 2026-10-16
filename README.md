@@ -1,30 +1,31 @@
-# InvoicePlane Docker
+# Gabbaya
 
-[![Docker Version](https://img.shields.io/docker/v/funktionslust/invoiceplane/latest?label=docker)](https://hub.docker.com/r/funktionslust/invoiceplane)
-[![Docker Pulls](https://img.shields.io/docker/pulls/funktionslust/invoiceplane)](https://hub.docker.com/r/funktionslust/invoiceplace)
+A patched Docker distribution of [InvoicePlane](https://github.com/InvoicePlane/InvoicePlane) v1,
+the self-hosted open source invoicing application.
 
-Production-ready Docker image for [InvoicePlane v1](https://github.com/InvoicePlane/InvoicePlane) - the self-hosted open source invoicing application.
+Gabbaya builds the **official InvoicePlane release** and applies a small, documented set of
+patches on top of it (see [`patches/series`](patches/series)). Patches are meant to go
+upstream; once InvoicePlane ships a change, the patch is dropped here.
 
-> **Note:** This image is for InvoicePlane v1.x. [InvoicePlane v2](https://github.com/InvoicePlane/InvoicePlane-v2) is a separate project currently in development.
+> Gabbaya is not affiliated with InvoicePlane. "InvoicePlane" and its logo are trademarks of
+> InvoicePlane.com / Kovah.de and are used here only to describe what this image contains.
 
-**GitHub:** [https://github.com/funktionslust/invoiceplane-docker](https://github.com/funktionslust/invoiceplane-docker)
+**Image:** `ghcr.io/torreirow/gabbaya`
 
-**Docker Hub:** [https://hub.docker.com/r/funktionslust/invoiceplane](https://hub.docker.com/r/funktionslust/invoiceplane)
+## How it works
 
-**Tags:**
-- `latest`, `production` - Latest stable InvoicePlane release
-- `1.x.x` - Specific version tags (all stable releases >= 1.6.0)
-- `development`, `dev` - Development branch (bleeding edge)
+| File                          | Purpose                                                        |
+| ----------------------------- | -------------------------------------------------------------- |
+| `UPSTREAM_VERSION`            | InvoicePlane release the image is built from                   |
+| `UPSTREAM_SHA256`             | Checksum of that release zip, verified during the build        |
+| `patches/series`              | Ordered patch list; every patch has a status (`upstream:<PR>` or `downstream-only:<reason>`) |
+| `scripts/apply-patches.sh`    | Applies the series; the build fails if a patch no longer applies |
 
-## Features
-
-- All stable InvoicePlane releases (automatically built)
-- E-Invoice Support
-- Multi-architecture: linux/amd64 and linux/arm64
-- PHP 8.1 with Apache on Debian Bookworm
-- Security headers, OPcache enabled, optimized settings
-- Reverse Proxy / Trusted Proxies Support
-- Config ipconfig.php via environment vars
+- **Build** (`.github/workflows/build.yml`): builds the pinned release with the patch series,
+  smoke-tests it against MariaDB and pushes to ghcr.io from `main`.
+- **Upstream check** (`.github/workflows/check-upstream.yml`): weekly; opens a PR bumping
+  `UPSTREAM_VERSION`/`UPSTREAM_SHA256` when InvoicePlane publishes a new stable release.
+  A patch that upstream has merged makes the build fail, which is the signal to drop it.
 
 ## Quick Start
 
@@ -34,7 +35,9 @@ docker compose up -d
 
 Access at `http://localhost:8080` and follow the setup wizard.
 
-**Note:** After completing the setup wizard, the container will automatically set `DISABLE_SETUP=true` for security on the next restart. To manually re-enable the setup wizard, set the environment variable `DISABLE_SETUP=false`.
+**Note:** After completing the setup wizard, the container automatically sets
+`DISABLE_SETUP=true` on the next restart. To re-enable the wizard (e.g. for a database
+upgrade), set `DISABLE_SETUP=false`.
 
 ## Environment Variables
 
@@ -95,6 +98,10 @@ Note: These are only set if empty. Setup wizard values take precedence.
 
 - `/var/www/html/uploads` - Uploaded files
 - `/var/www/html/application/logs` - Application logs
+- `/config` - `ipconfig.php` (encryption key, setup state). **Mount this**, otherwise a
+  re-created container (e.g. on an image upgrade) starts with a fresh `ipconfig.php`.
+  An existing in-container `ipconfig.php` is moved here on first start. Override the
+  location with `GABBAYA_CONFIG_DIR`.
 
 ## E-Invoice Support
 
@@ -123,34 +130,27 @@ environment:
 You can also install templates manually using the interactive script:
 
 ```bash
-docker exec -it invoiceplane download-einvoice-templates.sh
+docker exec -it gabbaya download-einvoice-templates.sh
 ```
 
 For more information: [InvoicePlane E-Invoices Repository](https://github.com/InvoicePlane/InvoicePlane-e-invoices)
 
-## Docker Image Tags
+## Image Tags
 
-Available on both [Docker Hub](https://hub.docker.com/r/funktionslust/invoiceplane/tags) and [GitHub Container Registry](https://github.com/funktionslust/invoiceplane-docker/pkgs/container/invoiceplane-docker):
+| Tag                     | Description                                   |
+| ----------------------- | --------------------------------------------- |
+| `latest`                | Newest build from `main`                      |
+| `<version>`             | e.g. `1.7.2`: newest build of that release    |
+| `<version>-<commit>`    | e.g. `1.7.2-ab12cd3`: one specific build      |
 
-<!-- TAGS_START -->
-| Tag | Description |
-|-----|-------------|
-| `latest`, `production` | Latest stable release |
-| `1.7.1`, `1.7.0`, `1.6.5`, `1.6.4`, `1.6.3`, `1.6.2`, `1.6.1`, `1.6.0` | Specific versions |
-| `development`, `dev` | Development branch |
-<!-- TAGS_END -->
+Pin by digest in production.
 
-```bash
-docker pull funktionslust/invoiceplane:latest
-docker pull funktionslust/invoiceplane:development
-```
+## Credits and License
 
-## License
+Gabbaya started as a fork of
+[funktionslust/invoiceplane-docker](https://github.com/funktionslust/invoiceplane-docker)
+by Funktionslust GmbH - Wolfgang Stark. Thank you!
 
-This Docker image configuration (Dockerfile, scripts, etc.) is licensed under the MIT License - see [LICENSE](LICENSE)
-
-InvoicePlane itself is licensed under its own MIT-style license - see [InvoicePlane LICENSE](https://github.com/InvoicePlane/InvoicePlane/blob/development/LICENSE.txt)
-
----
-
-**Maintained by:** Funktionslust GmbH - Wolfgang Stark ([info@funktionslust.digital](mailto:info@funktionslust.digital))
+The Docker configuration (Dockerfile, scripts, workflows) is licensed under the MIT License,
+see [LICENSE](LICENSE). InvoicePlane itself is licensed under its own MIT-style license, see
+[InvoicePlane LICENSE](https://github.com/InvoicePlane/InvoicePlane/blob/develop/LICENSE.txt).
