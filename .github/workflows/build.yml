@@ -71,6 +71,11 @@ jobs:
           test "$(docker exec app cat /var/www/html/.invoiceplane-version)" = "${{ steps.pin.outputs.version }}"
           echo "Applied patches:"; docker exec app cat /var/www/html/.gabbaya-patches
 
+          # Extra composer packages are installed and autoloadable
+          echo "Extra composer packages:"; docker exec app cat /var/www/html/.gabbaya-composer
+          docker exec -w /var/www/html app sh -c 'while read -r name version; do test -f "vendor/$name/composer.json" || { echo "missing $name"; exit 1; }; done < .gabbaya-composer'
+          docker exec app php -r 'require "/var/www/html/vendor/autoload.php"; exit(class_exists("Jumbojett\\OpenIDConnectClient") ? 0 : 1);'
+
           # ipconfig.php lives in the persistent /config volume
           docker exec app test -L /var/www/html/ipconfig.php
           docker exec app test -f /config/ipconfig.php
@@ -79,6 +84,9 @@ jobs:
           if docker exec app sh -c 'cat /var/log/apache2/php_errors.log 2>/dev/null' | grep -i 'fatal'; then
             exit 1
           fi
+
+      - name: OIDC single sign-on E2E (patch 0004)
+        run: tests/oidc-e2e/run.sh gabbaya:test
 
       - name: Log in to ghcr.io
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

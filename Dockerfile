@@ -152,10 +152,14 @@ RUN set -e; \
     && rm -rf /tmp/invoiceplane \
     && echo "$VERSION" > /var/www/html/.invoiceplane-version
 
-# Apply the Gabbaya patch series (see patches/series)
+# Extra composer packages needed by patches (see patches/composer-requires), then the
+# Gabbaya patch series (see patches/series)
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 COPY patches/ /usr/src/gabbaya/patches/
+COPY scripts/composer-requires.sh /usr/local/bin/gabbaya-composer-requires
 COPY scripts/apply-patches.sh /usr/local/bin/gabbaya-apply-patches
-RUN chmod +x /usr/local/bin/gabbaya-apply-patches \
+RUN chmod +x /usr/local/bin/gabbaya-composer-requires /usr/local/bin/gabbaya-apply-patches \
+    && gabbaya-composer-requires /usr/src/gabbaya/patches/composer-requires /var/www/html \
     && gabbaya-apply-patches /usr/src/gabbaya/patches /var/www/html
 
 # Create necessary directories and set permissions

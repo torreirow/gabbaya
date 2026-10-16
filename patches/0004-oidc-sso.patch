@@ -1,0 +1,702 @@
+diff --color -ruN a/application/language/english/ip_lang.php b/application/language/english/ip_lang.php
+--- a/application/language/english/ip_lang.php
++++ b/application/language/english/ip_lang.php
+@@ -399,6 +399,27 @@
+     'number_format_iso80k1_comma'                   => '1 000 000,00 (ISO 80000-1 with decimal comma)',
+     'number_format_compact_point'                   => '1000000.00 (Compact format with decimal point)',
+     'number_format_compact_comma'                   => '1000000,00 (Compact format with decimal comma)',
++    'oidc_allow_local_login'                        => 'Allow local password login',
++    'oidc_allow_local_login_hint'                   => 'Keep enabled as a fallback; the local form stays reachable at /sessions/login?local=1.',
++    'oidc_auto_create_users'                        => 'Create unknown users on first login',
++    'oidc_auto_redirect_login'                      => 'Redirect the login page to the provider',
++    'oidc_button_text'                              => 'Login button text',
++    'oidc_client_id'                                => 'Client ID',
++    'oidc_client_secret'                            => 'Client secret',
++    'oidc_default_user_type'                        => 'User type for created users',
++    'oidc_enabled'                                  => 'Enable single sign-on (OpenID Connect)',
++    'oidc_env_override_hint'                        => 'Values set as OIDC_* in ipconfig.php or the environment take precedence over these settings.',
++    'oidc_error_auth_failed'                        => 'Single sign-on failed. Please try again or log in with your password.',
++    'oidc_error_not_configured'                     => 'Single sign-on is not configured.',
++    'oidc_error_user_inactive'                      => 'Your account is inactive.',
++    'oidc_error_user_not_found'                     => 'No account is linked to this single sign-on identity.',
++    'oidc_login'                                    => 'Log in with single sign-on',
++    'oidc_provider_url'                             => 'Provider (issuer) URL',
++    'oidc_redirect_uri'                             => 'Redirect URI to register at the provider',
++    'oidc_require_email_verified'                   => 'Only link accounts with a verified email',
++    'oidc_scopes'                                   => 'Scopes',
++    'oidc_token_auth_methods'                       => 'Token endpoint authentication methods',
++    'oidc_verify_ssl'                               => "Verify the provider's TLS certificate",
+     'online_payment_already_processed'              => 'This payment has already been processed and recorded.',
+     'online_payment_error'                          => 'Payment system error detected! If this message persists, please contact us.',
+     'online_payment_failed'                         => 'Payment failed',
+@@ -413,6 +434,7 @@
+     'open_reports_in_new_tab'                       => 'Open Reports in a new Browser Tab',
+     'optional'                                      => 'Optional',
+     'options'                                       => 'Options',
++    'or'                                            => 'or',
+     'order'                                         => 'Order',
+     'other_settings'                                => 'Other Settings',
+     'overdue'                                       => 'Overdue',
+@@ -555,6 +577,7 @@
+     'reset'                                         => 'Reset',
+     'reset_password'                                => 'Reset password',
+     'run_report'                                    => 'Run Report',
++    'single_sign_on'                                => 'Single sign-on',
+     'svg_logo_blocked_security'                     => 'SVG logo files are blocked for security reasons. Please remove this logo and upload a PNG, JPG, or GIF file instead.',
+     'svg_upload_blocked_security'                   => 'SVG file upload blocked for security reasons. Please upload a PNG, JPG, or GIF file instead.',
+     'security_warning'                              => 'Security Warning',
+diff --color -ruN a/application/libraries/Oidc.php b/application/libraries/Oidc.php
+--- a/application/libraries/Oidc.php
++++ b/application/libraries/Oidc.php
+@@ -0,0 +1,236 @@
++<?php
++
++if ( ! defined('BASEPATH')) {
++    exit('No direct script access allowed');
++}
++
++use Jumbojett\OpenIDConnectClient;
++
++/*
++ * InvoicePlane
++ *
++ * @author		InvoicePlane Developers & Contributors
++ * @copyright	Copyright (c) 2012 - 2018 InvoicePlane.com
++ * @license		https://invoiceplane.com/license.txt
++ * @link		https://invoiceplane.com
++ */
++
++/**
++ * OpenID Connect single sign-on.
++ *
++ * Based on the OIDC implementation by DJBenson (InvoicePlane#1448), rebuilt on the
++ * current session handling. Configuration comes from OIDC_* environment/ipconfig keys
++ * first, then from the settings stored in ip_settings.
++ */
++#[AllowDynamicProperties]
++class Oidc
++{
++    private $CI;
++
++    private ?OpenIDConnectClient $client = null;
++
++    private bool $enabled;
++
++    private string $provider_url;
++
++    private string $client_id;
++
++    private string $client_secret;
++
++    public function __construct()
++    {
++        $this->CI = &get_instance();
++        $this->CI->load->library('crypt');
++        $this->CI->load->helper('file_security');
++
++        $env_enabled   = (string) env('OIDC_ENABLED');
++        $this->enabled = $env_enabled !== ''
++            ? env_bool('OIDC_ENABLED')
++            : get_setting('oidc_enabled') === '1';
++
++        $this->provider_url = rtrim((string) (env('OIDC_PROVIDER_URL') ?: get_setting('oidc_provider_url')), '/');
++        $this->client_id    = (string) (env('OIDC_CLIENT_ID') ?: get_setting('oidc_client_id'));
++
++        $secret = (string) env('OIDC_CLIENT_SECRET');
++        if ($secret === '' && get_setting('oidc_client_secret') !== '') {
++            $secret = (string) $this->CI->crypt->decode(get_setting('oidc_client_secret'));
++        }
++
++        $this->client_secret = $secret;
++    }
++
++    public function is_enabled(): bool
++    {
++        return $this->enabled
++            && $this->provider_url !== ''
++            && $this->client_id !== ''
++            && $this->client_secret !== '';
++    }
++
++    public function is_local_login_allowed(): bool
++    {
++        return ! $this->is_enabled() || get_setting('oidc_allow_local_login', '1') === '1';
++    }
++
++    public function is_auto_redirect_enabled(): bool
++    {
++        return $this->is_enabled() && get_setting('oidc_auto_redirect_login', '0') === '1';
++    }
++
++    public function button_text(): string
++    {
++        $text = get_setting('oidc_button_text');
++
++        return $text !== '' ? $text : trans('oidc_login');
++    }
++
++    /**
++     * Redirect the browser to the provider (does not return).
++     */
++    public function start_login(): void
++    {
++        $this->client()->authenticate();
++    }
++
++    /**
++     * Complete the authorization code flow and return the identity claims.
++     *
++     * The library validates state, nonce, PKCE and the ID token (signature, iss, aud, exp).
++     *
++     * @return array{sub: string, email: ?string, email_verified: mixed, name: ?string, preferred_username: ?string}
++     */
++    public function complete_login(): array
++    {
++        $client = $this->client();
++        $client->authenticate();
++
++        $user_info = $client->requestUserInfo();
++
++        $name = trim((string) ($user_info->name ?? ''));
++        if ($name === '') {
++            $name = trim(($user_info->given_name ?? '') . ' ' . ($user_info->family_name ?? ''));
++        }
++
++        return [
++            'sub'                => (string) $client->getVerifiedClaims('sub'),
++            'email'              => isset($user_info->email) ? (string) $user_info->email : null,
++            'email_verified'     => $user_info->email_verified ?? null,
++            'name'               => $name !== '' ? $name : null,
++            'preferred_username' => isset($user_info->preferred_username) ? (string) $user_info->preferred_username : null,
++        ];
++    }
++
++    /**
++     * Resolve the InvoicePlane account for the provider identity.
++     *
++     * Order: stored subject, then (verified) email of exactly one account, then optional
++     * auto-creation. Returns null when no account may be used.
++     */
++    public function resolve_user(array $claims): ?object
++    {
++        if ($claims['sub'] === '') {
++            log_message('error', 'OIDC: identity without sub claim');
++
++            return null;
++        }
++
++        $user = $this->CI->db->where('user_oidc_sub', $claims['sub'])->get('ip_users')->row();
++        if ($user) {
++            return $user;
++        }
++
++        if (empty($claims['email'])) {
++            return null;
++        }
++
++        if (get_setting('oidc_require_email_verified', '1') === '1' && ! $this->is_true($claims['email_verified'])) {
++            log_message('error', 'OIDC: email not verified for sub ' . sanitize_for_logging($claims['sub']));
++
++            return null;
++        }
++
++        $matches = $this->CI->db->where('user_email', $claims['email'])->get('ip_users')->result();
++        if (count($matches) === 1) {
++            $this->link_user((int) $matches[0]->user_id, $claims['sub']);
++
++            return $this->CI->db->where('user_id', $matches[0]->user_id)->get('ip_users')->row();
++        }
++
++        if (count($matches) > 1) {
++            log_message('error', 'OIDC: email matches more than one account, not linking sub ' . sanitize_for_logging($claims['sub']));
++
++            return null;
++        }
++
++        if (get_setting('oidc_auto_create_users', '0') === '1') {
++            return $this->create_user($claims);
++        }
++
++        return null;
++    }
++
++    private function client(): OpenIDConnectClient
++    {
++        if ($this->client !== null) {
++            return $this->client;
++        }
++
++        $client = new OpenIDConnectClient($this->provider_url, $this->client_id, $this->client_secret);
++        $client->setRedirectURL(site_url('sessions/oidc_callback'));
++        $client->setCodeChallengeMethod('S256');
++
++        $scopes = array_filter(explode(' ', (string) get_setting('oidc_scopes', 'openid email profile')));
++        $client->addScope($scopes);
++
++        $methods = array_filter(array_map('trim', explode(',', (string) get_setting('oidc_token_auth_methods', 'client_secret_basic,client_secret_post'))));
++        $client->setTokenEndpointAuthMethodsSupported($methods);
++
++        if (get_setting('oidc_verify_ssl', '1') !== '1') {
++            $client->setVerifyHost(false);
++            $client->setVerifyPeer(false);
++        }
++
++        return $this->client = $client;
++    }
++
++    private function link_user(int $user_id, string $sub): void
++    {
++        $this->CI->db->where('user_id', $user_id)->update('ip_users', [
++            'user_oidc_sub'      => $sub,
++            'user_auth_provider' => 'oidc',
++        ]);
++    }
++
++    private function create_user(array $claims): ?object
++    {
++        $name = $claims['name'] ?? $claims['preferred_username'] ?? $claims['email'];
++        $now  = date('Y-m-d H:i:s');
++
++        $inserted = $this->CI->db->insert('ip_users', [
++            'user_type'          => (int) get_setting('oidc_default_user_type', '2') === 1 ? 1 : 2,
++            'user_active'        => 1,
++            'user_email'         => $claims['email'],
++            'user_name'          => $name,
++            'user_password'      => null,
++            'user_psalt'         => null,
++            'user_auth_provider' => 'oidc',
++            'user_oidc_sub'      => $claims['sub'],
++            'user_language'      => 'system',
++            'user_date_created'  => $now,
++            'user_date_modified' => $now,
++        ]);
++
++        if ( ! $inserted) {
++            log_message('error', 'OIDC: could not create user for sub ' . sanitize_for_logging($claims['sub']));
++
++            return null;
++        }
++
++        return $this->CI->db->where('user_id', $this->CI->db->insert_id())->get('ip_users')->row();
++    }
++
++    private function is_true($value): bool
++    {
++        return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) === true;
++    }
++}
+diff --color -ruN a/application/modules/sessions/controllers/Sessions.php b/application/modules/sessions/controllers/Sessions.php
+--- a/application/modules/sessions/controllers/Sessions.php
++++ b/application/modules/sessions/controllers/Sessions.php
+@@ -37,22 +37,38 @@
+ 
+     public function login()
+     {
++        $this->load->library('oidc');
++
++        $oidc_enabled  = $this->oidc->is_enabled();
++        $allow_local   = $this->oidc->is_local_login_allowed();
++        $local_request = $this->input->get('local') === '1';
++        $has_error     = (bool) $this->session->flashdata('alert_error');
++
++        // Single sign-on: send anonymous visitors straight to the provider, but never for a
++        // form post, an explicit local login (?local=1) or right after a failed attempt.
++        if ($this->oidc->is_auto_redirect_enabled()
++            && $this->input->method() === 'get'
++            && ! $local_request
++            && ! $has_error
++        ) {
++            redirect('sessions/oidc_login');
++        }
++
+         $view_data = [
+-            'login_logo' => get_setting('login_logo'),
++            'login_logo'       => get_setting('login_logo'),
++            'oidc_enabled'     => $oidc_enabled,
++            'oidc_button_text' => $this->oidc->button_text(),
++            'show_local_login' => $allow_local,
+         ];
+ 
+         if ($this->input->post('btn_login')) {
+-            if ($this->authenticate($this->input->post('email'), $this->input->post('password'))) {
+-                if ($this->session->userdata('user_type') == 1) {
+-                    redirect('dashboard');
+-                } elseif ($this->session->userdata('user_type') == 2) {
+-                    redirect('guest');
+-                }
+-            } else {
+-                // Generic message for all failure cases to prevent account/status enumeration.
+-                $this->session->set_flashdata('alert_error', trans('loginalert_credentials_incorrect'));
+-                redirect('sessions/login');
++            if ($allow_local && $this->authenticate($this->input->post('email'), $this->input->post('password'))) {
++                $this->_redirect_after_login();
+             }
++
++            // Generic message for all failure cases to prevent account/status enumeration.
++            $this->session->set_flashdata('alert_error', trans('loginalert_credentials_incorrect'));
++            redirect($this->_login_url());
+         }
+ 
+         $this->load->view('session_login', $view_data);
+@@ -62,7 +78,69 @@
+     {
+         $this->session->sess_destroy();
+ 
+-        redirect('sessions/login');
++        redirect($this->_login_url());
++    }
++
++    /**
++     * Start single sign-on at the OpenID Connect provider.
++     */
++    public function oidc_login()
++    {
++        $this->load->library('oidc');
++
++        if ( ! $this->oidc->is_enabled()) {
++            $this->session->set_flashdata('alert_error', trans('oidc_error_not_configured'));
++            redirect('sessions/login?local=1');
++        }
++
++        try {
++            $this->oidc->start_login();
++        } catch (Throwable $e) {
++            log_message('error', 'OIDC: could not start login: ' . sanitize_for_logging($e->getMessage()));
++            $this->session->set_flashdata('alert_error', trans('oidc_error_auth_failed'));
++            redirect('sessions/login?local=1');
++        }
++    }
++
++    /**
++     * Return endpoint of the OpenID Connect provider.
++     */
++    public function oidc_callback()
++    {
++        $this->load->library('oidc');
++        $this->load->helper('file_security');
++
++        if ( ! $this->oidc->is_enabled()) {
++            $this->session->set_flashdata('alert_error', trans('oidc_error_not_configured'));
++            redirect('sessions/login?local=1');
++        }
++
++        if ($this->_is_ip_rate_limited_login()) {
++            log_message('warning', 'OIDC login IP rate limit exceeded from: ' . sanitize_for_logging($this->input->ip_address()));
++            $this->_oidc_fail('oidc_error_auth_failed');
++        }
++
++        try {
++            $claims = $this->oidc->complete_login();
++        } catch (Throwable $e) {
++            log_message('error', 'OIDC: callback failed: ' . sanitize_for_logging($e->getMessage()));
++            $this->_oidc_fail('oidc_error_auth_failed');
++        }
++
++        $user = $this->oidc->resolve_user($claims);
++        if ( ! $user) {
++            $this->_oidc_fail('oidc_error_user_not_found');
++        }
++
++        if ((int) $user->user_active !== 1) {
++            $this->_oidc_fail('oidc_error_user_inactive');
++        }
++
++        $this->load->model('mdl_sessions');
++        $this->mdl_sessions->start_session($user);
++        $this->_reset_ip_login_attempts();
++
++        $this->_redirect_after_login();
+     }
+ 
+     /**
+@@ -326,6 +404,36 @@
+     }
+ 
+     /**
++     * Record a failed single sign-on attempt and return to the local login page.
++     */
++    private function _oidc_fail(string $message_key): void
++    {
++        $this->_record_ip_login_attempt();
++        $this->session->set_flashdata('alert_error', trans($message_key));
++        redirect('sessions/login?local=1');
++    }
++
++    private function _redirect_after_login(): void
++    {
++        if ($this->session->userdata('user_type') == 1) {
++            redirect('dashboard');
++        } elseif ($this->session->userdata('user_type') == 2) {
++            redirect('guest');
++        }
++    }
++
++    /**
++     * Login page URL; with single sign-on enabled the local form is requested explicitly so
++     * the visitor is not sent straight back to the provider.
++     */
++    private function _login_url(): string
++    {
++        $this->load->library('oidc');
++
++        return $this->oidc->is_enabled() ? 'sessions/login?local=1' : 'sessions/login';
++    }
++
++    /**
+      * Not public: CI3 routes any public controller method directly via URL
+      * segments (e.g. /sessions/sessions/authenticate/<email>/<password>),
+      * which would let this bypass the login form, CSRF, and POST entirely
+diff --color -ruN a/application/modules/sessions/models/Mdl_sessions.php b/application/modules/sessions/models/Mdl_sessions.php
+--- a/application/modules/sessions/models/Mdl_sessions.php
++++ b/application/modules/sessions/models/Mdl_sessions.php
+@@ -31,6 +31,11 @@
+         if ($query->num_rows()) {
+             $user = $query->row();
+ 
++            // Accounts created through single sign-on may have no local password.
++            if ((string) $user->user_password === '') {
++                return false;
++            }
++
+             $this->load->library('crypt');
+ 
+             /*
+@@ -73,18 +78,7 @@
+                     return false;
+                 }
+ 
+-                $session_data = [
+-                    'user_type'     => $user->user_type,
+-                    'user_id'       => $user->user_id,
+-                    'user_name'     => $user->user_name,
+-                    'user_email'    => $user->user_email,
+-                    'user_company'  => $user->user_company,
+-                    'user_language' => $user->user_language ?? 'system',
+-                ];
+-
+-                // Regenerate session ID on login to prevent session fixation attacks.
+-                $this->session->sess_regenerate(true);
+-                $this->session->set_userdata($session_data);
++                $this->start_session($user);
+ 
+                 return true;
+             }
+@@ -94,6 +88,29 @@
+     }
+ 
+     /**
++     * Start an authenticated session for a user row from ip_users.
++     *
++     * Shared by local and single sign-on logins so both carry the same session data.
++     *
++     * @param object $user
++     */
++    public function start_session($user): void
++    {
++        $session_data = [
++            'user_type'     => $user->user_type,
++            'user_id'       => $user->user_id,
++            'user_name'     => $user->user_name,
++            'user_email'    => $user->user_email,
++            'user_company'  => $user->user_company,
++            'user_language' => $user->user_language ?? 'system',
++        ];
++
++        // Regenerate session ID on login to prevent session fixation attacks.
++        $this->session->sess_regenerate(true);
++        $this->session->set_userdata($session_data);
++    }
++
++    /**
+      * Destroy all active sessions for a given user_id. This forces immediate
+      * session invalidation when a user's role or active status is changed,
+      * revoking any stale authenticated sessions.
+diff --color -ruN a/application/modules/sessions/views/session_login.php b/application/modules/sessions/views/session_login.php
+--- a/application/modules/sessions/views/session_login.php
++++ b/application/modules/sessions/views/session_login.php
+@@ -58,7 +58,17 @@
+ 
+         <div class="row"><?php $this->layout->load_view('layout/alerts'); ?></div>
+ 
+-        <form method="post" action="<?php echo site_url($this->uri->uri_string()); ?>">
++<?php if ( ! empty($oidc_enabled)) { ?>
++        <a href="<?php echo site_url('sessions/oidc_login'); ?>" class="btn btn-primary btn-block btn-lg">
++            <i class="fa fa-sign-in fa-margin"></i> <?php _htmlsc($oidc_button_text); ?>
++        </a>
++<?php if ( ! empty($show_local_login)) { ?>
++        <p class="text-center text-muted" style="margin: 20px 0;">&mdash; <?php _trans('or'); ?> &mdash;</p>
++<?php } ?>
++<?php } ?>
++
++<?php if ( ! isset($show_local_login) || $show_local_login) { ?>
++        <form method="post" action="<?php echo site_url($this->uri->uri_string()) . ( ! empty($oidc_enabled) ? '?local=1' : ''); ?>">
+ 
+             <?php _csrf_field(); ?>
+ 
+@@ -78,7 +88,7 @@
+ 
+             <input type="hidden" name="btn_login" value="true">
+ 
+-            <button type="submit" class="btn btn-primary">
++            <button type="submit" class="btn <?php echo empty($oidc_enabled) ? 'btn-primary' : 'btn-default'; ?>">
+                 <i class="fa fa-unlock fa-margin"></i> <?php _trans('login'); ?>
+             </button>
+             <a href="<?php echo site_url('sessions/passwordreset'); ?>" class="btn btn-default">
+@@ -86,6 +96,7 @@
+             </a>
+ 
+         </form>
++<?php } ?>
+ 
+     </div>
+ </div>
+diff --color -ruN a/application/modules/settings/views/index.php b/application/modules/settings/views/index.php
+--- a/application/modules/settings/views/index.php
++++ b/application/modules/settings/views/index.php
+@@ -65,6 +65,9 @@
+         <a data-toggle="tab" href="#settings-projects-tasks"><?php _trans('projects'); ?></a>
+     </li>
+     <li>
++        <a data-toggle="tab" href="#settings-oidc"><?php _trans('single_sign_on'); ?></a>
++    </li>
++    <li>
+         <a data-toggle="tab" href="#settings-updates"><?php _trans('updates'); ?></a>
+     </li>
+ </ul>
+@@ -134,6 +137,10 @@
+                 <?php $this->layout->load_view('settings/partial_settings_projects_tasks'); ?>
+             </div>
+ 
++            <div id="settings-oidc" class="tab-pane">
++                <?php $this->layout->load_view('settings/partial_settings_oidc'); ?>
++            </div>
++
+             <div id="settings-updates" class="tab-pane">
+                 <?php $this->layout->load_view('settings/partial_settings_updates'); ?>
+             </div>
+diff --color -ruN a/application/modules/settings/views/partial_settings_oidc.php b/application/modules/settings/views/partial_settings_oidc.php
+--- a/application/modules/settings/views/partial_settings_oidc.php
++++ b/application/modules/settings/views/partial_settings_oidc.php
+@@ -0,0 +1,89 @@
++<?php
++$oidc_yes_no = [
++    'oidc_enabled'                => '0',
++    'oidc_allow_local_login'      => '1',
++    'oidc_auto_redirect_login'    => '0',
++    'oidc_auto_create_users'      => '0',
++    'oidc_require_email_verified' => '1',
++    'oidc_verify_ssl'             => '1',
++];
++$oidc_text = [
++    'oidc_provider_url'       => '',
++    'oidc_client_id'          => '',
++    'oidc_scopes'             => 'openid email profile',
++    'oidc_token_auth_methods' => 'client_secret_basic,client_secret_post',
++    'oidc_button_text'        => '',
++];
++?>
++<div class="row">
++    <div class="col-xs-12 col-md-8 col-md-offset-2">
++
++        <div class="panel panel-default">
++            <div class="panel-heading">
++                <?php _trans('single_sign_on'); ?>
++            </div>
++            <div class="panel-body">
++
++                <p class="text-muted"><?php _trans('oidc_env_override_hint'); ?></p>
++                <p>
++                    <?php _trans('oidc_redirect_uri'); ?>:
++                    <code><?php echo htmlsc(site_url('sessions/oidc_callback')); ?></code>
++                </p>
++
++                <div class="row">
++                    <div class="col-xs-12 col-md-6">
++<?php foreach ($oidc_yes_no as $key => $default) { ?>
++                        <div class="form-group">
++                            <label for="settings[<?php echo $key; ?>]">
++                                <?php _trans($key); ?>
++                            </label>
++                            <select name="settings[<?php echo $key; ?>]" id="settings[<?php echo $key; ?>]"
++                                class="form-control simple-select" data-minimum-results-for-search="Infinity">
++                                <option value="0"><?php _trans('no'); ?></option>
++                                <option value="1" <?php check_select(get_setting($key, $default), '1'); ?>><?php _trans('yes'); ?></option>
++                            </select>
++<?php if ($key === 'oidc_allow_local_login') { ?>
++                            <p class="help-block"><?php _trans('oidc_allow_local_login_hint'); ?></p>
++<?php } ?>
++                        </div>
++<?php } ?>
++
++                        <div class="form-group">
++                            <label for="settings[oidc_default_user_type]">
++                                <?php _trans('oidc_default_user_type'); ?>
++                            </label>
++                            <select name="settings[oidc_default_user_type]" id="settings[oidc_default_user_type]"
++                                class="form-control simple-select" data-minimum-results-for-search="Infinity">
++                                <option value="2"><?php _trans('guest_read_only'); ?></option>
++                                <option value="1" <?php check_select(get_setting('oidc_default_user_type', '2'), '1'); ?>><?php _trans('administrator'); ?></option>
++                            </select>
++                        </div>
++                    </div>
++
++                    <div class="col-xs-12 col-md-6">
++<?php foreach ($oidc_text as $key => $default) { ?>
++                        <div class="form-group">
++                            <label for="settings[<?php echo $key; ?>]">
++                                <?php _trans($key); ?>
++                            </label>
++                            <input type="text" name="settings[<?php echo $key; ?>]" id="settings[<?php echo $key; ?>]"
++                                class="form-control" value="<?php echo htmlsc(get_setting($key, $default)); ?>">
++                        </div>
++<?php } ?>
++
++                        <div class="form-group">
++                            <label for="oidc_client_secret">
++                                <?php _trans('oidc_client_secret'); ?>
++                            </label>
++                            <input type="password" id="oidc_client_secret" class="form-control"
++                                name="settings[oidc_client_secret]" autocomplete="new-password" value="">
++                            <input type="hidden" name="settings[oidc_client_secret_field_is_password]" value="1">
++                        </div>
++                    </div>
++                </div>
++
++            </div>
++        </div>
++
++    </div>
++</div>
+diff --color -ruN a/application/modules/setup/sql/043a_1.7.2.sql b/application/modules/setup/sql/043a_1.7.2.sql
+--- a/application/modules/setup/sql/043a_1.7.2.sql
++++ b/application/modules/setup/sql/043a_1.7.2.sql
+@@ -0,0 +1,10 @@
++-- Gabbaya (patch 0004-oidc-sso): single sign-on (OpenID Connect) schema on 1.7.2.
++-- Upstream carries the same change in its next version file; IF NOT EXISTS keeps this
++-- migration safe to run on a database that already has the columns (MariaDB).
++ALTER TABLE `ip_users`
++    MODIFY COLUMN `user_password` VARCHAR(60) NULL,
++    ADD COLUMN IF NOT EXISTS `user_auth_provider` VARCHAR(20) NOT NULL DEFAULT 'local' AFTER `user_psalt`,
++    ADD COLUMN IF NOT EXISTS `user_oidc_sub` VARCHAR(255) NULL AFTER `user_auth_provider`;
++
++ALTER TABLE `ip_users`
++    ADD UNIQUE INDEX IF NOT EXISTS `idx_user_oidc_sub` (`user_oidc_sub`);
+diff --color -ruN a/ipconfig.php.example b/ipconfig.php.example
+--- a/ipconfig.php.example
++++ b/ipconfig.php.example
+@@ -129,6 +129,15 @@
+ CUSTOM_QUOTE_TEMPLATES_PDF=
+ CUSTOM_QUOTE_TEMPLATES_PUBLIC=
+ 
++# Single sign-on (OpenID Connect), optional.
++# These keys override the settings under Settings > Single sign-on. Leave them commented
++# out to configure single sign-on in the UI instead. Register this redirect URI at the
++# provider: <IP_URL>/sessions/oidc_callback
++# OIDC_ENABLED=true
++# OIDC_PROVIDER_URL=https://auth.example.com
++# OIDC_CLIENT_ID=invoiceplane
++# OIDC_CLIENT_SECRET=
++
+ ##
+ ## DO NOT CHANGE ANY CONFIGURATION VALUES BELOW THIS LINE!
+ ## =======================================================

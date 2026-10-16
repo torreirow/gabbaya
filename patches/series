@@ -22,3 +22,9 @@
 #   via textContent; InvoicePlane#1432). Backport of the prep/v180 fix: srcdoc in a
 #   sandbox="" iframe. Also tightens the two mailer views from allow-same-origin to
 #   sandbox="" (upstream only did the template form). Drop when on >= 1.8.
+0004-oidc-sso.patch  upstream:pending
+# ^ single sign-on via OpenID Connect (rebuilt from InvoicePlane#1448 on the current
+#   session handling; fork branch torreirow/InvoicePlane feature/oidc-sso, commit bc58af51).
+#   Needs jumbojett/openid-connect-php (patches/composer-requires). 1.7.2 has no session
+#   credential fingerprint, so start_session() keeps the 1.7.2 session data. Schema via
+#   043a_1.7.2.sql (IF NOT EXISTS).

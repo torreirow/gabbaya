@@ -1,0 +1,12 @@
+# Extra composer packages installed on top of the release's vendor/ (production only).
+# Patches cannot add vendor code, so packages needed by a patch are listed here.
+#
+# One package per line:  <vendor/package>:<exact version>  <status>
+#   status = the patch that needs it (drop the line together with that patch)
+#
+# Only the listed packages are updated (composer update --no-dev <packages>); the rest of
+# the release's composer.lock stays as shipped. Versions are exact for reproducible builds.
+#
+jumbojett/openid-connect-php:1.0.2  0004-oidc-sso.patch
+phpseclib/phpseclib:3.0.57  0004-oidc-sso.patch
+paragonie/constant_time_encoding:3.1.3  0004-oidc-sso.patch
